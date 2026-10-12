@@ -1,61 +1,102 @@
-"""Automated tests for the Weather-Based Activity Agent."""
 
+import os
 import sys
 import unittest
-from pathlib import Path
 
-# Make the src folder available to Python during testing.
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(PROJECT_ROOT / "src"))
+sys.path.insert(
+    0,
+    os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "src"))
+)
 
-from agent import recommend_activities
+from agent import (
+    DAYS,
+    health_risks,
+    allowed,
+    probability_safe,
+    forward_chaining,
+    backward_chaining,
+    create_weekly_plan,
+)
 
 
-class TestWeatherAgent(unittest.TestCase):
+def sample_weather():
+    return {
+        "rain": 10,
+        "temp": 25,
+        "aqi": 40,
+        "heat": 26,
+        "available": True,
+    }
 
-    def test_suitable_weather_recommends_outdoor_activities(self):
-        result = recommend_activities(
-            temperature=28,
-            rain_chance=10,
-            wind_speed=8,
-            condition="sunny",
+
+class TestHealthAwareAgent(unittest.TestCase):
+
+    def test_high_aqi_triggers_warning(self):
+        weather = sample_weather()
+        weather["aqi"] = 150
+        self.assertTrue(
+            any("AQI warning" in risk for risk in health_risks(weather))
         )
-        self.assertIn("Walking or cycling", result["recommendations"])
 
-    def test_high_rain_chance_prefers_indoor_activities(self):
-        result = recommend_activities(
-            temperature=25,
-            rain_chance=80,
-            wind_speed=5,
-            condition="cloudy",
+    def test_high_heat_triggers_warning(self):
+        weather = sample_weather()
+        weather["heat"] = 41
+        self.assertTrue(
+            any("heat-stress" in risk for risk in health_risks(weather))
         )
-        self.assertIn("Indoor study or reading", result["recommendations"])
 
-    def test_severe_weather_prefers_indoor_activities(self):
-        result = recommend_activities(
-            temperature=25,
-            rain_chance=20,
-            wind_speed=5,
-            condition="thunderstorm",
+    def test_rain_blocks_cycling(self):
+        weather = sample_weather()
+        weather["rain"] = 80
+        self.assertFalse(allowed("Cycling", weather))
+
+    def test_indoor_study_is_allowed(self):
+        weather = sample_weather()
+        weather["rain"] = 90
+        weather["aqi"] = 200
+        self.assertTrue(allowed("Indoor study", weather))
+
+    def test_unavailable_user_cannot_do_activity(self):
+        weather = sample_weather()
+        weather["available"] = False
+        self.assertFalse(allowed("Cycling", weather))
+
+    def test_safety_estimate_is_in_range(self):
+        value = probability_safe(sample_weather())
+        self.assertGreaterEqual(value, 0)
+        self.assertLessEqual(value, 1)
+
+    def test_forward_chaining_returns_recommendation(self):
+        facts, recommendation, trace = forward_chaining(sample_weather())
+        self.assertIsInstance(facts, list)
+        self.assertTrue(recommendation)
+        self.assertTrue(trace)
+
+    def test_backward_chaining_rejects_heavy_rain(self):
+        weather = sample_weather()
+        weather["rain"] = 90
+        forecasts = {day: sample_weather() for day in DAYS}
+        forecasts["Saturday"] = weather
+
+        answer, trace = backward_chaining(
+            "Saturday", "Cycling", forecasts
         )
-        self.assertIn("Indoor study or reading", result["recommendations"])
+        self.assertFalse(answer)
+        self.assertTrue(trace)
 
-    def test_missing_weather_data_returns_warning(self):
-        result = recommend_activities(
-            temperature=25,
-            rain_chance=None,
-            wind_speed=5,
-            condition="sunny",
-        )
-        self.assertTrue(result["warnings"])
+    def test_weekly_plan_contains_all_days(self):
+        forecasts = {day: sample_weather() for day in DAYS}
+        result = create_weekly_plan(forecasts)
 
-    def test_invalid_temperature_is_rejected(self):
-        with self.assertRaises(ValueError):
-            recommend_activities(temperature=100)
+        self.assertIsNotNone(result["plan"])
+        self.assertEqual(set(result["plan"]), set(DAYS))
 
-    def test_empty_weather_data_uses_safe_default(self):
-        result = recommend_activities()
-        self.assertIn("Indoor study or reading", result["recommendations"])
+    def test_ac3_reports_domain_counts(self):
+        forecasts = {day: sample_weather() for day in DAYS}
+        result = create_weekly_plan(forecasts)
+
+        self.assertGreater(result["before_count"], 0)
+        self.assertGreater(result["after_count"], 0)
 
 
 if __name__ == "__main__":
