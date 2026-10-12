@@ -1,5 +1,4 @@
 
-"""IA-2: Health-Aware Decision Support Agent."""
 
 DAYS = [
     "Monday", "Tuesday", "Wednesday", "Thursday",
