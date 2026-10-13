@@ -1,5 +1,4 @@
 
-"""IA-2: Health-Aware Decision Support Agent - User Interface."""
 
 from agent import (
     DAYS,
